@@ -3,25 +3,27 @@
 
 int main() {
   int num;
-  int byte;
+
+  printf("\ntask 3:\n");
+  printf("input a number: ");
+
   if (scanf("%d", &num) != 1) {
     printf("Invalid input\n");
     return 1;
   }
-  if (scanf("%d", &byte) != 1 && byte < 0 || byte > 255) {
-    printf("Invalid input\n");
-    return 1;
-  }
-  char *p = (char *)&num;
-  p += 2;
-  *p = byte;
 
+  int count = 0;
   for (int i = 31; i >= 0; i--) {
-    printf("%d", (num >> i) & 1);
+    int bit = (num >> i) & 1;
+    if (bit == 1)
+      count++;
+    printf("%d", bit);
+
     if (i % 8 == 0)
       printf(" ");
   }
-  printf("\n");
+
+  printf("\nnumber of ones: %d\n", count);
 
   return 0;
 }

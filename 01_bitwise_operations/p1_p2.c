@@ -3,6 +3,9 @@
 int main() {
   int num;
 
+  printf("\ntask 1-2:\n");
+  printf("input a number: ");
+
   if (scanf("%d", &num) != 1) {
     printf("Invalid input\n");
     return 1;

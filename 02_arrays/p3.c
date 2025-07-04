@@ -2,7 +2,10 @@
 #include <stdlib.h>
 
 int main() {
-  int size;
+  int size = 0;
+
+  printf("\ntask 2:\n");
+  printf("input the size of matrix: ");
 
   if (scanf("%d", &size) != 1) {
     printf("Invalid input\n");
@@ -10,8 +13,19 @@ int main() {
   }
 
   int **matrix = malloc(size * sizeof(int *));
-  for (int i = 0; i < size; i++)
+  if (matrix == NULL) {
+    printf("Memory allocation failed\n");
+    return 1;
+  }
+  for (int i = 0; i < size; i++) {
     matrix[i] = malloc(size * sizeof(int));
+    if (matrix[i] == NULL) {
+      printf("Memory allocation failed\n");
+      for (int j = 0; j < i; j++) free(matrix[j]);
+      free(matrix);
+      return 1;
+    }
+  }
 
   for (int i = 0; i < size; i++)
     for (int j = 0; j < size; j++)
@@ -27,8 +41,7 @@ int main() {
     printf("\n");
   }
 
-  for (int i = 0; i < size; i++)
-    free(matrix[i]);
+  for (int i = 0; i < size; i++) free(matrix[i]);
   free(matrix);
 
   return 0;
