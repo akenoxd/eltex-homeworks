@@ -1,4 +1,3 @@
-#include <limits.h>
 #include <stdio.h>
 
 int main() {
@@ -15,12 +14,10 @@ int main() {
   int count = 0;
   for (int i = 31; i >= 0; i--) {
     int bit = (num >> i) & 1;
-    if (bit == 1)
-      count++;
+    if (bit == 1) count++;
     printf("%d", bit);
 
-    if (i % 8 == 0)
-      printf(" ");
+    if (i % 8 == 0) printf(" ");
   }
 
   printf("\nnumber of ones: %d\n", count);
