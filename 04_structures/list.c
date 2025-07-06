@@ -78,9 +78,10 @@ void free_list(Node *head) {
 }
 
 void print_list(const Node *head) {
+  printf("      Name|Second name|Phone number\n");
   while (head) {
-    printf("Имя: %10s, Фамилия: %10s, Телефон: %10s\n", head->data.name,
-           head->data.second_name, head->data.tel);
+    printf("%10s|%11s|%12s\n", head->data.name, head->data.second_name,
+           head->data.tel);
     head = head->next;
   }
 }

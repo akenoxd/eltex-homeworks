@@ -19,7 +19,7 @@ void add(Node **head) {
   scanf("%9s", ab.name);
   printf("Enter second name: ");
   scanf("%9s", ab.second_name);
-  printf("Enter tel: ");
+  printf("Enter phone number: ");
   scanf("%9s", ab.tel);
   insert(head, &ab);
   printf("Added!\n");
@@ -29,8 +29,10 @@ void delete(Node **head) {
   char name[10];
   printf("Enter name to delete: ");
   scanf("%9s", name);
-  delete_node(head, name);
-  printf("Deleted (if found).\n");
+  if (delete_node(head, name))
+    printf("Not found\n");
+  else
+    printf("Deleted!\n");
 }
 
 void search(Node *head) {
@@ -49,10 +51,11 @@ void search(Node *head) {
 int main() {
   Node *head = NULL;
   while (1) {
+    printf("\n");
     print_menu();
     int choice = 0;
     scanf("%d", &choice);
-    while (getchar() != '\n');  // очистка буфера
+    // while (getchar() != '\n');
     switch (choice) {
       case 1:
         add(&head);
@@ -68,7 +71,6 @@ int main() {
         break;
       case 5:
         free_list(head);
-        printf("Bye!\n");
         return 0;
       default:
         printf("Wrong input!\n");
