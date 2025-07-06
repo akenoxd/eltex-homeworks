@@ -39,7 +39,7 @@ void search(Node *head) {
   char name[10];
   printf("Enter name to search: ");
   scanf("%9s", name);
-  Node *found = find_by_name_bin(head, name);
+  Node *found = find_by_name(head, name);
   if (found) {
     printf("Found: %s %s %s\n", found->data.name, found->data.second_name,
            found->data.tel);

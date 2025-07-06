@@ -60,7 +60,7 @@ int delete_node(Node **head, char *name) {
   return 1;
 }
 
-Node *find_by_name_bin(Node *head, const char *name) {
+Node *find_by_name(Node *head, const char *name) {
   Node *curr = head;
   while (curr) {
     if (strcmp(curr->data.name, name) == 0) return curr;
