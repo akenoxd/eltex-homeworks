@@ -17,6 +17,7 @@ void insert(Node **head, const abonent *data) {
   Node *new_node = create_node(data);
   if (!new_node) return;
 
+  // Добавление в пустой список
   if (*head == NULL) {
     *head = new_node;
     return;
@@ -27,14 +28,19 @@ void insert(Node **head, const abonent *data) {
     curr = curr->next;
   }
 
+  // Добавление в начало списка
   if (curr == *head && strcmp(data->name, curr->data.name) < 0) {
     new_node->next = *head;
     (*head)->prev = new_node;
     *head = new_node;
-  } else if (!curr->next && strcmp(data->name, curr->data.name) > 0) {
+  }
+  // Добавление в конец списка
+  else if (!curr->next && strcmp(data->name, curr->data.name) > 0) {
     curr->next = new_node;
     new_node->prev = curr;
-  } else {
+  }
+  // Добавление в середину списка
+  else {
     new_node->prev = curr->prev;
     new_node->next = curr;
     if (curr->prev) curr->prev->next = new_node;
