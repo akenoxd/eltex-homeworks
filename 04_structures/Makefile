@@ -1,19 +1,21 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -Werror -std=c11
+AR = ar
+ARFLAGS = rcs
 
 all: main.out
 
-main.out: main.o list.o
-	$(CC) $(CFLAGS) main.o list.o -o main.out
+main.out: main.o liblist.a
+	$(CC) $(CFLAGS) $^ -L. -llist -o $@
+
+liblist.a: list.o
+	$(AR) $(ARFLAGS) $@ $^
 
 main.o: main.c list.h
-	$(CC) $(CFLAGS) -c main.c
+	$(CC) $(CFLAGS) -c $<
 
 list.o: list.c list.h
-	$(CC) $(CFLAGS) -c list.c
+	$(CC) $(CFLAGS) -c $<
 
 clean:
-	rm -f *.o *.out
-
-run: main.out
-	./main.out
+	rm -f *.o *.out *.a

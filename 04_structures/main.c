@@ -55,7 +55,7 @@ int main() {
     print_menu();
     int choice = 0;
     scanf("%d", &choice);
-    // while (getchar() != '\n');
+    while (getchar() != '\n');
     switch (choice) {
       case 1:
         add(&head);
