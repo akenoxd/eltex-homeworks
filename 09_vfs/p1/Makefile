@@ -5,6 +5,9 @@ ARFLAGS = rcs
 
 all: main.out
 
+run: main.out
+	./main.out
+
 main.out: main.c
 	$(CC) $(CFLAGS) $^ -o $@
 

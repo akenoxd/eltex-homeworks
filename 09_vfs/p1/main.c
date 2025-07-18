@@ -29,10 +29,11 @@ int main() {
   }
   char *buf = malloc(filesize + 1);
   if (!buf) {
-    perror("malloc error");
+    printf("malloc error");
     fclose(fp);
     return 1;
   }
+
   fseek(fp, 0, SEEK_SET);
   fread(buf, 1, filesize, fp);
   buf[filesize] = '\0';
