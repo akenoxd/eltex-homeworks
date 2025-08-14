@@ -81,6 +81,7 @@ void *input_thread(void *arg) {
 }
 
 int main() {
+  printf("type /exit to shut down server.\n");
   mqd_t service_mq;
   user_t users[10];
   int active_users = 0;
