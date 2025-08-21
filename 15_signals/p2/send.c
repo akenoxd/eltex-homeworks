@@ -6,20 +6,20 @@
 
 int main(int argc, char *argv[]) {
   if (argc != 2) {
-    fprintf(stderr, "Использование: %s <PID приемника>\n", argv[0]);
+    fprintf(stderr, "usage: %s <PID>\n", argv[0]);
     exit(EXIT_FAILURE);
   }
 
   pid_t pid = (pid_t)atoi(argv[1]);
 
-  printf("Отправка SIGUSR1 процессу с PID %d\n", pid);
+  printf("sending SIGUSR1 to PID %d\n", pid);
 
   if (kill(pid, SIGUSR1) == -1) {
-    perror("Ошибка kill");
+    perror("kill");
     exit(EXIT_FAILURE);
   }
 
-  printf("Сигнал успешно отправлен\n");
+  printf("signal sent\n");
 
   return 0;
 }
