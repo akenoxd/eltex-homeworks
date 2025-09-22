@@ -1,0 +1,27 @@
+
+networks:
+  mynet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.10.0/24
+
+services:
+  server:
+    build: .
+    command: ./server.out
+    networks:
+      mynet:
+        mac_address: 00:11:22:33:44:55
+        ipv4_address: 10.10.10.2
+
+  client:
+    build: .
+    command: ./client.out
+    networks:
+      mynet:
+        mac_address: 00:11:22:33:44:66
+        ipv4_address: 10.10.10.3
+    depends_on:
+      - server
+
