@@ -1,23 +1,14 @@
-#include <arpa/inet.h>
-#include <linux/if_packet.h>
-#include <net/ethernet.h>
-#include <net/if.h>
-#include <netinet/ether.h>
-#include <netinet/if_ether.h>
 #include <netinet/in.h>
-#include <netinet/ip.h>
-#include <netinet/udp.h>
-#include <pthread.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
-#include <sys/time.h>
 #include <sys/un.h>
 #include <unistd.h>
 
 #define MAX_CLIENTS 100
+#define BUF_SIZE 100
+#define REPLY_SIZE 256
 #define CLOSE_MSG "quit"
 
 // Структура для хранения информации о клиенте
@@ -64,58 +55,35 @@ void reset_client(struct sockaddr_in *addr) {
 }
 
 int main() {
-  int s = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+  int s = socket(AF_INET, SOCK_DGRAM, 0);
   if (s == -1) {
     perror("socket");
     exit(EXIT_FAILURE);
   }
+  struct sockaddr_in addr = {.sin_family = AF_INET,
+                             .sin_port = htons(9999),
+                             .sin_addr.s_addr = INADDR_ANY};
 
-  struct timeval tv;
-  tv.tv_sec = 1;
-  tv.tv_usec = 0;
-  if (setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
-    perror("setsockopt");
+  if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
+    perror("bind");
     exit(EXIT_FAILURE);
   }
 
   struct sockaddr_in client_addr;
   socklen_t client_len = sizeof(client_addr);
 
-  char *packet_in[1024] = {0};
-  in_addr_t server_ip;
-  // inet_pton(AF_INET, "10.10.10.3", &client_ip);
-  inet_pton(AF_INET, "10.10.10.2", &server_ip);
-
+  char buf[BUF_SIZE];
   while (1) {
-    int bytes_received = recv(s, packet_in, 1024, 0);
-    if (bytes_received == -1) {
-      perror("recvfrom");
-      break;
+    ssize_t recv_len = recvfrom(s, buf, sizeof(buf) - 1, 0,
+                                (struct sockaddr *)(&client_addr), &client_len);
+    if (recv_len == -1) {
+      perror("recv");
+      exit(EXIT_FAILURE);
     }
+    buf[recv_len] = '\0';
 
-    struct ether_header *eth = (struct ether_header *)packet_in;
-    // if (memcmp(eth->ether_dhost, client_mac, 6) != 0) continue;
-    // if (memcmp(eth->ether_shost, server_mac, 6) != 0) continue;
-    if (ntohs(eth->ether_type) != ETHERTYPE_IP) continue;
-
-    struct iphdr *iph =
-        (struct iphdr *)(packet_in + sizeof(struct ether_header));
-    if (iph->protocol != IPPROTO_UDP) continue;
-    // if (iph->daddr != client_ip) continue;
-    if (iph->daddr != server_ip) continue;
-
-    struct udphdr *udph = (struct udphdr *)((packet_in + iph->ihl * 4) +
-                                            sizeof(struct ether_header));
-    if (ntohs(udph->dest) != 7777) continue;
-    if (ntohs(udph->source) != 9999) continue;
-
-    char *payload = (char *)(udph + 1);
-    uint16_t udp_len = ntohs(udph->len);
-    uint16_t payload_len = udp_len - sizeof(struct udphdr);
-    payload[payload_len] = '\0';
-    printf("Received: %s\n", payload);
     // Проверка на команду закрытия
-    if (strcmp(payload, CLOSE_MSG) == 0) {
+    if (strcmp(buf, CLOSE_MSG) == 0) {
       reset_client(&client_addr);
       printf("Client disconnected and counter reset\n");
       continue;

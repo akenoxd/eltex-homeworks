@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <errno.h>
 #include <linux/if_packet.h>
 #include <net/ethernet.h>
 #include <net/if.h>
@@ -21,8 +22,6 @@
 
 volatile sig_atomic_t stop_flag = 0;
 
-// void handle_sigint(int sig) { stop_flag = 1; }
-
 uint16_t ip_checksum(void *header) {
   uint32_t sum = 0;
   uint16_t *ptr = (uint16_t *)header;
@@ -41,7 +40,6 @@ uint16_t ip_checksum(void *header) {
 struct thread_data {
   int sock;
   char *packet;
-  // int packet_len;
   struct sockaddr_ll sll;
 };
 
@@ -52,31 +50,28 @@ void *sender_thread(void *arg) {
   while (!stop_flag) {
     printf("Enter message (or 'quit' to exit): ");
     fgets(input, MAX_INPUT_SIZE, stdin);
-    input[strcspn(input, "\n")] = 0;  // Remove newline
-    if (strcmp(input, "quit") == 0) {
-      stop_flag = 1;
-    }
-    int data_len = strlen(input);
+    input[strcspn(input, "\n")] = 0;
+    if (strcmp(input, "quit") == 0) stop_flag = 1;
+
+    int payload_len = strlen(input);
 
     struct iphdr *iph =
         (struct iphdr *)(data->packet + sizeof(struct ether_header));
     iph->tot_len =
-        htons(sizeof(struct iphdr) + sizeof(struct udphdr) + data_len);
+        htons(sizeof(struct iphdr) + sizeof(struct udphdr) + payload_len);
     iph->check = 0;
     iph->check = ip_checksum(iph);
 
-    // Update packet payload with new message
     struct udphdr *udph =
         (struct udphdr *)(data->packet + sizeof(struct ether_header) +
                           sizeof(struct iphdr));
     char *payload = (char *)(udph + 1);
-    memcpy(payload, input, data_len + 1);
+    memcpy(payload, input, payload_len + 1);
 
-    // Recalculate UDP length
-    udph->len = htons(sizeof(struct udphdr) + data_len);
+    udph->len = htons(sizeof(struct udphdr) + payload_len);
 
     int packet_tot_len = sizeof(struct ether_header) + sizeof(struct iphdr) +
-                         sizeof(struct udphdr) + data_len;
+                         sizeof(struct udphdr) + payload_len;
 
     if (sendto(data->sock, data->packet, packet_tot_len, 0,
                (struct sockaddr *)&data->sll, sizeof(data->sll)) == -1) {
@@ -101,13 +96,15 @@ void *receiver_thread(void *arg) {
   while (!stop_flag) {
     int bytes_received = recv(sock, buf, sizeof(buf), 0);
     if (bytes_received == -1) {
-      perror("recvfrom");
-      break;
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        continue;
+      } else {
+        perror("recv");
+        break;
+      }
     }
 
     struct ether_header *eth = (struct ether_header *)buf;
-    // if (memcmp(eth->ether_dhost, client_mac, 6) != 0) continue;
-    // if (memcmp(eth->ether_shost, server_mac, 6) != 0) continue;
     if (ntohs(eth->ether_type) != ETHERTYPE_IP) continue;
 
     struct iphdr *iph = (struct iphdr *)(buf + sizeof(struct ether_header));
@@ -158,8 +155,6 @@ int main() {
   iph->version = 4;
   iph->ihl = 5;  // 5 * 4 = 20 bytes
   iph->tos = 0;
-  // iph->tot_len = htons(sizeof(struct iphdr) + sizeof(struct udphdr) +
-  // data_len);
   iph->id = 0;
   iph->frag_off = 0;
   iph->ttl = 64;
@@ -167,31 +162,23 @@ int main() {
   iph->check = 0;
   inet_pton(AF_INET, "10.10.10.3", &iph->saddr);
   inet_pton(AF_INET, "10.10.10.2", &iph->daddr);
-  // iph->check = ip_checksum(iph);
 
   struct udphdr *udph = (struct udphdr *)(packet + sizeof(struct ether_header) +
                                           sizeof(struct iphdr));
-  // char *payload = (char *)(udph + 1);
 
   udph->source = htons(7777);
   udph->dest = htons(9999);
-  // udph->len = htons(sizeof(struct udphdr) + data_len);
   udph->check = 0;
-
-  // int packet_len = sizeof(struct ether_header) + sizeof(struct iphdr) +
-  //                  sizeof(struct udphdr) + data_len;
 
   struct sockaddr_ll sll = {0};
   sll.sll_family = AF_PACKET;
   sll.sll_ifindex = if_nametoindex("eth0");
-  // sll.sll_halen = ETH_ALEN;
-  // memcpy(sll.sll_addr, dest_mac, 6);
+  sll.sll_halen = ETH_ALEN;
+  memcpy(sll.sll_addr, dest_mac, 6);
   sll.sll_protocol = htons(ETH_P_IP);
   struct thread_data tdata = {.sock = s, .packet = packet, .sll = sll};
 
   pthread_t sender_tid, receiver_tid;
-
-  // signal(SIGINT, handle_sigint);
 
   if (pthread_create(&sender_tid, NULL, sender_thread, &tdata) != 0) {
     perror("pthread_create sender");
