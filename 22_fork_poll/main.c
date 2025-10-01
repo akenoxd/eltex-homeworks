@@ -28,15 +28,16 @@ typedef struct {
 DriverInfo drivers[MAX_DRIVERS];
 int driver_count = 0;
 
-DriverInfo* find_driver_by_pid(pid_t pid) {
+DriverInfo *find_driver_by_pid(pid_t pid) {
   for (int i = 0; i < driver_count; i++)
-    if (drivers[i].pid == pid) return &drivers[i];
+    if (drivers[i].pid == pid)
+      return &drivers[i];
 
   return NULL;
 }
 
-int send_command_to_driver(DriverInfo* driver, const char* command,
-                           char* response, size_t response_size) {
+int send_command_to_driver(DriverInfo *driver, const char *command,
+                           char *response, size_t response_size) {
   if (!driver || !command) {
     printf("Error: Invalid parameters\n");
     return -1;
@@ -155,7 +156,7 @@ int create_driver() {
     printf("Error: Maximum number of drivers (%d) reached\n", MAX_DRIVERS);
     return -1;
   }
-  DriverInfo* driver = &drivers[driver_count];
+  DriverInfo *driver = &drivers[driver_count];
 
   if (pipe(driver->to_driver) == -1) {
     perror("Error creating pipe");
@@ -207,7 +208,7 @@ int send_task(pid_t pid, int task_timer) {
     return -1;
   }
 
-  DriverInfo* driver = find_driver_by_pid(pid);
+  DriverInfo *driver = find_driver_by_pid(pid);
   if (!driver) {
     printf("Error: Driver with PID %d not found\n", pid);
     return -1;
@@ -228,7 +229,7 @@ int send_task(pid_t pid, int task_timer) {
 }
 
 int get_status(pid_t pid) {
-  DriverInfo* driver = find_driver_by_pid(pid);
+  DriverInfo *driver = find_driver_by_pid(pid);
   if (!driver) {
     printf("Error: Driver with PID %d not found\n", pid);
     return -1;
@@ -260,8 +261,9 @@ int get_drivers() {
   return 0;
 }
 
-int cleanup_driver(DriverInfo* driver) {
-  if (!driver) return -1;
+int cleanup_driver(DriverInfo *driver) {
+  if (!driver)
+    return -1;
 
   int result = 0;
   char command[] = "EXIT\n";
@@ -296,7 +298,7 @@ int cleanup() {
 int main() {
   char input[MAX_BUFFER];
 
-  printf("Taxi management system. Available commands:\n");
+  printf("Available commands:\n");
   printf("create_driver\n");
   printf("send_task <pid> <timer>\n");
   printf("get_status <pid>\n");
@@ -307,21 +309,22 @@ int main() {
     printf("taxi> ");
     fflush(stdout);
 
-    if (fgets(input, sizeof(input), stdin) == NULL) break;
+    if (fgets(input, sizeof(input), stdin) == NULL)
+      break;
 
     input[strcspn(input, "\n")] = '\0';
 
-    if (strcmp(input, "create_driver") == 0) {
-      if (create_driver() != 0) {
+    if (strncmp(input, "create_driver", 13) == 0) {
+      if (create_driver() != 0)
         printf("Error creating driver\n");
-      }
+
     } else if (strncmp(input, "send_task", 9) == 0) {
       pid_t pid;
       int timer;
       if (sscanf(input, "send_task %d %d", &pid, &timer) == 2) {
-        if (send_task(pid, timer) != 0) {
+        if (send_task(pid, timer) != 0)
           printf("Error sending task to driver\n");
-        }
+
       } else {
         printf("Usage: send_task <pid> <timer>\n");
       }
@@ -334,11 +337,11 @@ int main() {
       } else {
         printf("Usage: get_status <pid>\n");
       }
-    } else if (strcmp(input, "get_drivers") == 0) {
-      if (get_drivers() != 0) {
+    } else if (strncmp(input, "get_drivers", 11) == 0) {
+      if (get_drivers() != 0)
         printf("Error getting drivers list\n");
-      }
-    } else if (strcmp(input, "exit") == 0) {
+
+    } else if (strncmp(input, "exit", 4) == 0) {
       break;
     } else if (strlen(input) > 0) {
       printf("Unknown command: %s\n", input);
