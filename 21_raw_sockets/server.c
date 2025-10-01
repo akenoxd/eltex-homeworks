@@ -1,6 +1,8 @@
 #include <arpa/inet.h>
 #include <errno.h>
-#include <linux/if_packet.h>
+#include <ifaddrs.h>
+#define __USE_MISC 1
+#include <ifaddrs.h>
 #include <net/ethernet.h>
 #include <net/if.h>
 #include <netinet/ether.h>
@@ -8,23 +10,29 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/udp.h>
+#include <netpacket/packet.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <sys/types.h>
 #include <sys/un.h>
 #include <unistd.h>
 
-#define MAX_CLIENTS 100
+#define MAX_CLIENTS 10
 #define BUF_SIZE 1024
 #define REPLY_SIZE 256
 #define CLOSE_MSG "quit"
 
 volatile sig_atomic_t stop_flag = 0;
+
+void handle_sigint(int sig) {
+  (void)sig;
+  stop_flag = 1;
+}
 
 // Структура для хранения информации о клиенте
 typedef struct {
@@ -36,13 +44,12 @@ typedef struct {
 
 client_info clients[MAX_CLIENTS];
 
-// Сравнение клиентов по ip:port
 int client_equal(struct in_addr *ip1, uint16_t port1, struct in_addr *ip2,
                  uint16_t port2) {
   return ip1->s_addr == ip2->s_addr && port1 == port2;
 }
 
-// Поиск клиента, если нет — добавление нового
+// search existing or add new client, return index or -1 if full
 int get_client_index(struct in_addr *ip, uint16_t port) {
   for (int i = 0; i < MAX_CLIENTS; ++i) {
     if (clients[i].used &&
@@ -50,7 +57,6 @@ int get_client_index(struct in_addr *ip, uint16_t port) {
       return i;
     }
   }
-  // Новый клиент
   for (int i = 0; i < MAX_CLIENTS; ++i) {
     if (!clients[i].used) {
       clients[i].ip = *ip;
@@ -60,20 +66,15 @@ int get_client_index(struct in_addr *ip, uint16_t port) {
       return i;
     }
   }
-  return -1;  // Нет места
+  return -1; // full
 }
 
-// Сброс клиента
-void reset_client(struct in_addr *ip, uint16_t port) {
-  for (int i = 0; i < MAX_CLIENTS; ++i) {
-    if (clients[i].used &&
-        client_equal(&clients[i].ip, clients[i].port, ip, port)) {
-      clients[i].used = 0;
-      printf("Client %s:%d disconnected and counter reset\n", inet_ntoa(*ip),
-             port);
-      break;
-    }
-  }
+// resets counter
+void reset_client(int idx) {
+  clients[idx].used = 0;
+  clients[idx].counter = 0;
+  clients[idx].port = 0;
+  memset(&clients[idx].ip, 0, sizeof(clients[idx].ip));
 }
 
 uint16_t ip_checksum(void *header) {
@@ -91,34 +92,50 @@ uint16_t ip_checksum(void *header) {
   return htons((uint16_t)~sum);
 }
 
-void create_reply_packet(char *packet, struct ether_header *received_eth,
-                         struct iphdr *received_iph,
-                         struct udphdr *received_udph, char *payload,
-                         int payload_len, int client_counter) {
-  // Ethernet header
+int get_ip_and_iface(char *ip_buf, size_t ip_buf_len, char *iface_buf,
+                     size_t iface_buf_len) {
+  struct ifaddrs *ifaddr, *ifa;
+  int found = 0;
+  if (getifaddrs(&ifaddr) == -1) {
+    perror("getifaddrs");
+    return -1;
+  }
+  for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+    if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET &&
+        !(ifa->ifa_flags & IFF_LOOPBACK)) {
+      struct sockaddr_in *sa = (struct sockaddr_in *)ifa->ifa_addr;
+      if (inet_ntop(AF_INET, &sa->sin_addr, ip_buf, ip_buf_len)) {
+        strncpy(iface_buf, ifa->ifa_name, iface_buf_len - 1);
+        iface_buf[iface_buf_len - 1] = '\0';
+        found = 1;
+        break;
+      }
+    }
+  }
+  freeifaddrs(ifaddr);
+  return found ? 0 : -1;
+}
+
+int create_reply_packet(char *packet, struct ether_header *received_eth,
+                        struct iphdr *received_iph,
+                        struct udphdr *received_udph, char *payload,
+                        int client_counter) {
   struct ether_header *eth = (struct ether_header *)packet;
 
-  // Swap MAC addresses using temporary variable
-  unsigned char temp_mac[6];
-  memcpy(temp_mac, received_eth->ether_dhost, 6);
-  memcpy(eth->ether_dhost, received_eth->ether_shost,
-         6);  // Destination = original source
-
-  memcpy(eth->ether_shost, received_eth->ether_dhost,
-         6);  // Source = original destination
+  // swap MAC addresses
+  memcpy(eth->ether_dhost, received_eth->ether_shost, 6);
+  memcpy(eth->ether_shost, received_eth->ether_dhost, 6);
 
   eth->ether_type = htons(ETHERTYPE_IP);
 
-  // IP header
   struct iphdr *iph = (struct iphdr *)(packet + sizeof(struct ether_header));
   iph->version = 4;
   iph->ihl = 5;
   iph->tos = 0;
 
-  // Calculate total length correctly
   char reply_msg[REPLY_SIZE];
-  snprintf(reply_msg, sizeof(reply_msg), "%s %d", payload, client_counter);
-  int reply_msg_len = strlen(reply_msg);
+  int reply_msg_len =
+      snprintf(reply_msg, sizeof(reply_msg), "%s %d", payload, client_counter);
 
   iph->tot_len =
       htons(sizeof(struct iphdr) + sizeof(struct udphdr) + reply_msg_len);
@@ -126,36 +143,46 @@ void create_reply_packet(char *packet, struct ether_header *received_eth,
   iph->frag_off = 0;
   iph->ttl = 64;
   iph->protocol = IPPROTO_UDP;
+
+  // swap IP addresses
+  iph->saddr = received_iph->daddr;
+  iph->daddr = received_iph->saddr;
+
   iph->check = 0;
-
-  // Swap IP addresses
-  iph->saddr = received_iph->daddr;  // Server IP (was destination in request)
-  iph->daddr = received_iph->saddr;  // Client IP (was source in request)
-
   iph->check = ip_checksum(iph);
 
-  // UDP header
   struct udphdr *udph = (struct udphdr *)(packet + sizeof(struct ether_header) +
                                           sizeof(struct iphdr));
-  udph->source =
-      received_udph->dest;  // Server port (was destination in request)
-  udph->dest = received_udph->source;  // Client port (was source in request)
-  udph->len = htons(sizeof(struct udphdr) + reply_msg_len);
-  udph->check = 0;  // UDP checksum is optional for IPv4
+  // swap ports
+  udph->source = received_udph->dest;
+  udph->dest = received_udph->source;
 
-  // Payload
+  udph->len = htons(sizeof(struct udphdr) + reply_msg_len);
+  udph->check = 0;
+
+  // payload
   char *reply_payload = (char *)(udph + 1);
   memcpy(reply_payload, reply_msg, reply_msg_len);
+
+  // packet length
+  return sizeof(struct ether_header) + sizeof(struct iphdr) +
+         sizeof(struct udphdr) + reply_msg_len;
 }
 
 int main() {
+
+  struct sigaction sa;
+  sa.sa_handler = handle_sigint;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;
+  sigaction(SIGINT, &sa, NULL);
+
   int s = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
   if (s == -1) {
     perror("socket");
     exit(EXIT_FAILURE);
   }
 
-  // Bind to interface
   struct sockaddr_ll sll = {0};
   sll.sll_family = AF_PACKET;
   sll.sll_ifindex = if_nametoindex("eth0");
@@ -167,11 +194,11 @@ int main() {
     exit(EXIT_FAILURE);
   }
 
-  printf(
-      "Raw socket server started on eth0, listening for UDP packets on port "
-      "9999...\n");
+  printf("Raw socket server started on eth0, listening for UDP packets on port "
+         "9999...\n");
 
   char buf[BUF_SIZE];
+  // hardcoded ..
   struct in_addr server_ip;
   inet_pton(AF_INET, "10.10.10.2", &server_ip);
 
@@ -186,64 +213,39 @@ int main() {
       }
     }
 
-    // Check if packet is large enough to contain Ethernet + IP headers
-    if (bytes_received <
-        (int)(sizeof(struct ether_header) + sizeof(struct iphdr))) {
-      continue;
-    }
-
     struct ether_header *eth = (struct ether_header *)buf;
-
-    // Only process IP packets
-    if (ntohs(eth->ether_type) != ETHERTYPE_IP) {
-      continue;
-    }
-
     struct iphdr *iph = (struct iphdr *)(buf + sizeof(struct ether_header));
-
-    // Only process UDP packets
-    if (iph->protocol != IPPROTO_UDP) {
-      continue;
-    }
-
-    // Check if packet is destined to our server
-    if (iph->daddr != server_ip.s_addr) {
-      continue;
-    }
-
-    // Check if packet is large enough to contain UDP header
-    if (bytes_received < (int)(sizeof(struct ether_header) + iph->ihl * 4 +
-                               sizeof(struct udphdr))) {
-      continue;
-    }
-
     struct udphdr *udph =
         (struct udphdr *)(buf + sizeof(struct ether_header) + iph->ihl * 4);
 
-    // Check if packet is for our server port
-    if (ntohs(udph->dest) != 9999) {
+    if (bytes_received < (int)(sizeof(struct ether_header) + iph->ihl * 4 +
+                               sizeof(struct udphdr)))
       continue;
-    }
+    if (ntohs(eth->ether_type) != ETHERTYPE_IP)
+      continue;
+    if (iph->protocol != IPPROTO_UDP)
+      continue;
+    if (iph->daddr != server_ip.s_addr)
+      continue;
+    if (ntohs(udph->dest) != 9999)
+      continue;
 
-    // Extract payload
     char *payload = (char *)(udph + 1);
     uint16_t udp_len = ntohs(udph->len);
     uint16_t payload_len = udp_len - sizeof(struct udphdr);
 
-    // Ensure we don't read beyond received data
     if (bytes_received <
         (int)(sizeof(struct ether_header) + iph->ihl * 4 + udp_len)) {
       continue;
     }
 
-    // Null-terminate the payload for string processing
     if (payload_len > 0) {
-      int safe_payload_len = (payload_len < (BUF_SIZE - (payload - buf) - 1))
-                                 ? payload_len
-                                 : (BUF_SIZE - (payload - buf) - 1);
+      int bytes_left_in_buf = BUF_SIZE - (payload - buf) - 1;
+      int safe_payload_len =
+          (payload_len < bytes_left_in_buf) ? payload_len : bytes_left_in_buf;
       payload[safe_payload_len] = '\0';
     } else {
-      continue;  // Skip empty packets
+      continue; // Skip empty packets
     }
 
     // Get client info
@@ -254,13 +256,7 @@ int main() {
     printf("Received from %s:%d: %s\n", inet_ntoa(client_ip), client_port,
            payload);
 
-    // Check for quit message
-    if (strcmp(payload, CLOSE_MSG) == 0) {
-      reset_client(&client_ip, client_port);
-      continue;
-    }
-
-    // Get or create client
+    // get existing client or add new
     int idx = get_client_index(&client_ip, udph->source);
     if (idx == -1) {
       fprintf(stderr, "Too many clients, ignoring message from %s:%d\n",
@@ -268,30 +264,30 @@ int main() {
       continue;
     }
 
+    // "quit"
+    int is_quit = strcmp(payload, CLOSE_MSG);
+    if (is_quit == 0) {
+      printf("client counter reset %s:%d\n", inet_ntoa(client_ip), client_port);
+      reset_client(idx);
+      continue;
+    }
+
     clients[idx].counter++;
 
-    // Create reply packet
+    // create reply packet
     char reply_packet[BUF_SIZE];
     memset(reply_packet, 0, sizeof(reply_packet));
-    create_reply_packet(reply_packet, eth, iph, udph, payload, payload_len,
-                        clients[idx].counter);
+    int packet_len = create_reply_packet(reply_packet, eth, iph, udph, payload,
+                                         clients[idx].counter);
 
-    // Prepare destination address for raw socket
     struct sockaddr_ll dest_addr = {0};
     dest_addr.sll_family = AF_PACKET;
     dest_addr.sll_ifindex = if_nametoindex("eth0");
     dest_addr.sll_halen = ETH_ALEN;
-    memcpy(dest_addr.sll_addr, eth->ether_shost, 6);  // Send to client's MAC
+    memcpy(dest_addr.sll_addr, eth->ether_shost, 6);
     dest_addr.sll_protocol = htons(ETH_P_IP);
 
-    // Calculate packet length correctly
-    char reply_msg[REPLY_SIZE];
-    snprintf(reply_msg, sizeof(reply_msg), "%s %d", payload,
-             clients[idx].counter);
-    int packet_len = sizeof(struct ether_header) + sizeof(struct iphdr) +
-                     sizeof(struct udphdr) + strlen(reply_msg);
-
-    // Send only ONE reply
+    // Send reply
     if (sendto(s, reply_packet, packet_len, 0, (struct sockaddr *)&dest_addr,
                sizeof(dest_addr)) == -1) {
       perror("sendto");

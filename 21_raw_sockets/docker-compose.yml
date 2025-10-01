@@ -15,13 +15,20 @@ services:
         mac_address: 00:11:22:33:44:55
         ipv4_address: 10.10.10.2
 
-  client:
+  client-1:
     build: .
     command: ./client.out
     networks:
       mynet:
         mac_address: 00:11:22:33:44:66
         ipv4_address: 10.10.10.3
-    depends_on:
-      - server
+
+  client-2:
+    build: .
+    command: ./client.out
+    networks:
+      mynet:
+        mac_address: 00:11:22:33:44:77
+        ipv4_address: 10.10.10.4
+
 

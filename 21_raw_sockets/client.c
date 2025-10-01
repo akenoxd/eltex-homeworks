@@ -1,6 +1,8 @@
 #include <arpa/inet.h>
 #include <errno.h>
-#include <linux/if_packet.h>
+#include <ifaddrs.h>
+#define __USE_MISC 1
+#include <ifaddrs.h>
 #include <net/ethernet.h>
 #include <net/if.h>
 #include <netinet/ether.h>
@@ -8,6 +10,7 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/udp.h>
+#include <netpacket/packet.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -15,6 +18,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <sys/types.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -37,33 +41,65 @@ uint16_t ip_checksum(void *header) {
   return htons((uint16_t)~sum);
 }
 
-struct thread_data {
+struct sender_args {
   int sock;
   char *packet;
   struct sockaddr_ll sll;
 };
 
+struct receiver_args {
+  int sock;
+  in_addr_t client_ip;
+  in_addr_t server_ip;
+};
+
+// gets first non-loopback IPv4 address and interface name
+int get_ip_and_iface(char *ip_buf, size_t ip_buf_len, char *iface_buf,
+                     size_t iface_buf_len) {
+  struct ifaddrs *ifaddr, *ifa;
+  int found = 0;
+  if (getifaddrs(&ifaddr) == -1) {
+    perror("getifaddrs");
+    return -1;
+  }
+  for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+    if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_INET &&
+        !(ifa->ifa_flags & IFF_LOOPBACK)) {
+      struct sockaddr_in *sa = (struct sockaddr_in *)ifa->ifa_addr;
+      if (inet_ntop(AF_INET, &sa->sin_addr, ip_buf, ip_buf_len)) {
+        strncpy(iface_buf, ifa->ifa_name, iface_buf_len - 1);
+        iface_buf[iface_buf_len - 1] = '\0';
+        found = 1;
+        break;
+      }
+    }
+  }
+  freeifaddrs(ifaddr);
+  return found ? 0 : -1;
+}
+
 void *sender_thread(void *arg) {
-  struct thread_data *data = (struct thread_data *)arg;
+  struct sender_args *args = (struct sender_args *)arg;
   char input[MAX_INPUT_SIZE];
 
   while (!stop_flag) {
     printf("Enter message (or 'quit' to exit): ");
     fgets(input, MAX_INPUT_SIZE, stdin);
-    input[strcspn(input, "\n")] = 0;
-    if (strcmp(input, "quit") == 0) stop_flag = 1;
+    input[strcspn(input, "\n")] = '\0';
+    if (strcmp(input, "quit") == 0)
+      stop_flag = 1;
 
     int payload_len = strlen(input);
 
     struct iphdr *iph =
-        (struct iphdr *)(data->packet + sizeof(struct ether_header));
+        (struct iphdr *)(args->packet + sizeof(struct ether_header));
     iph->tot_len =
         htons(sizeof(struct iphdr) + sizeof(struct udphdr) + payload_len);
     iph->check = 0;
     iph->check = ip_checksum(iph);
 
     struct udphdr *udph =
-        (struct udphdr *)(data->packet + sizeof(struct ether_header) +
+        (struct udphdr *)(args->packet + sizeof(struct ether_header) +
                           sizeof(struct iphdr));
     char *payload = (char *)(udph + 1);
     memcpy(payload, input, payload_len + 1);
@@ -73,8 +109,8 @@ void *sender_thread(void *arg) {
     int packet_tot_len = sizeof(struct ether_header) + sizeof(struct iphdr) +
                          sizeof(struct udphdr) + payload_len;
 
-    if (sendto(data->sock, data->packet, packet_tot_len, 0,
-               (struct sockaddr *)&data->sll, sizeof(data->sll)) == -1) {
+    if (sendto(args->sock, args->packet, packet_tot_len, 0,
+               (struct sockaddr *)&args->sll, sizeof(args->sll)) == -1) {
       perror("sendto");
       break;
     }
@@ -86,12 +122,12 @@ void *sender_thread(void *arg) {
 }
 
 void *receiver_thread(void *arg) {
-  int sock = *(int *)arg;
-  char buf[MAX_INPUT_SIZE];
+  struct receiver_args *args = (struct receiver_args *)arg;
 
-  in_addr_t client_ip, server_ip;
-  inet_pton(AF_INET, "10.10.10.3", &client_ip);
-  inet_pton(AF_INET, "10.10.10.2", &server_ip);
+  int sock = args->sock;
+  in_addr_t client_ip = args->client_ip;
+  in_addr_t server_ip = args->server_ip;
+  char buf[MAX_INPUT_SIZE];
 
   while (!stop_flag) {
     int bytes_received = recv(sock, buf, sizeof(buf), 0);
@@ -105,17 +141,23 @@ void *receiver_thread(void *arg) {
     }
 
     struct ether_header *eth = (struct ether_header *)buf;
-    if (ntohs(eth->ether_type) != ETHERTYPE_IP) continue;
+    if (ntohs(eth->ether_type) != ETHERTYPE_IP)
+      continue;
 
     struct iphdr *iph = (struct iphdr *)(buf + sizeof(struct ether_header));
-    if (iph->protocol != IPPROTO_UDP) continue;
-    if (iph->daddr != client_ip) continue;
-    if (iph->saddr != server_ip) continue;
+    if (iph->protocol != IPPROTO_UDP)
+      continue;
+    if (iph->daddr != client_ip)
+      continue;
+    if (iph->saddr != server_ip)
+      continue;
 
     struct udphdr *udph =
         (struct udphdr *)((buf + iph->ihl * 4) + sizeof(struct ether_header));
-    if (ntohs(udph->dest) != 7777) continue;
-    if (ntohs(udph->source) != 9999) continue;
+    if (ntohs(udph->dest) != 7777)
+      continue;
+    if (ntohs(udph->source) != 9999)
+      continue;
 
     char *payload = (char *)(udph + 1);
     uint16_t udp_len = ntohs(udph->len);
@@ -125,6 +167,26 @@ void *receiver_thread(void *arg) {
   }
 
   return NULL;
+}
+
+int get_mac_address(const char *ifname, unsigned char *mac) {
+  struct ifaddrs *ifaddr = NULL, *ifa = NULL;
+  int found = 0;
+  if (getifaddrs(&ifaddr) == -1) {
+    perror("getifaddrs");
+    return -1;
+  }
+  for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+    if (ifa->ifa_addr && ifa->ifa_addr->sa_family == AF_PACKET &&
+        strcmp(ifa->ifa_name, ifname) == 0) {
+      struct sockaddr_ll *s = (struct sockaddr_ll *)ifa->ifa_addr;
+      memcpy(mac, s->sll_addr, 6);
+      found = 1;
+      break;
+    }
+  }
+  freeifaddrs(ifaddr);
+  return found ? 0 : -1;
 }
 
 int main() {
@@ -142,55 +204,77 @@ int main() {
     exit(EXIT_FAILURE);
   }
 
-  char packet[1024] = {0};
+  char my_ip[INET_ADDRSTRLEN] = {0};
+  char iface[IFNAMSIZ] = {0};
+  if (get_ip_and_iface(my_ip, sizeof(my_ip), iface, sizeof(iface)) != 0) {
+    fprintf(stderr, "Failed to get IP and interface\n");
+    close(s);
+    exit(EXIT_FAILURE);
+  }
+  printf("Using interface: %s, IP: %s\n", iface, my_ip);
 
+  unsigned char src_mac[6];
+  if (get_mac_address(iface, src_mac) != 0) {
+    fprintf(stderr, "Failed to get MAC address for %s\n", iface);
+    close(s);
+    exit(EXIT_FAILURE);
+  }
+
+  char packet[1024] = {0};
   struct ether_header *eth = (struct ether_header *)packet;
-  unsigned char src_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x66};
+
+  // hardcoded, could be args or maybe ARP ??
+  char dest_ip[INET_ADDRSTRLEN] = "10.10.10.2";
   unsigned char dest_mac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
+
   memcpy(eth->ether_shost, src_mac, 6);
   memcpy(eth->ether_dhost, dest_mac, 6);
   eth->ether_type = htons(ETHERTYPE_IP);
 
   struct iphdr *iph = (struct iphdr *)(packet + sizeof(struct ether_header));
   iph->version = 4;
-  iph->ihl = 5;  // 5 * 4 = 20 bytes
+  iph->ihl = 5;
   iph->tos = 0;
   iph->id = 0;
   iph->frag_off = 0;
   iph->ttl = 64;
   iph->protocol = IPPROTO_UDP;
   iph->check = 0;
-  inet_pton(AF_INET, "10.10.10.3", &iph->saddr);
-  inet_pton(AF_INET, "10.10.10.2", &iph->daddr);
+  inet_pton(AF_INET, my_ip, &iph->saddr);
+  inet_pton(AF_INET, dest_ip, &iph->daddr);
 
   struct udphdr *udph = (struct udphdr *)(packet + sizeof(struct ether_header) +
                                           sizeof(struct iphdr));
-
   udph->source = htons(7777);
   udph->dest = htons(9999);
   udph->check = 0;
 
   struct sockaddr_ll sll = {0};
   sll.sll_family = AF_PACKET;
-  sll.sll_ifindex = if_nametoindex("eth0");
+  sll.sll_ifindex = if_nametoindex(iface);
   sll.sll_halen = ETH_ALEN;
   memcpy(sll.sll_addr, dest_mac, 6);
   sll.sll_protocol = htons(ETH_P_IP);
-  struct thread_data tdata = {.sock = s, .packet = packet, .sll = sll};
+
+  struct sender_args tdata = {.sock = s, .packet = packet, .sll = sll};
+  struct receiver_args receiver_args;
+  receiver_args.sock = s;
+  inet_pton(AF_INET, my_ip, &receiver_args.client_ip);
+  inet_pton(AF_INET, dest_ip, &receiver_args.server_ip);
 
   pthread_t sender_tid, receiver_tid;
-
   if (pthread_create(&sender_tid, NULL, sender_thread, &tdata) != 0) {
     perror("pthread_create sender");
     exit(EXIT_FAILURE);
   }
-  if (pthread_create(&receiver_tid, NULL, receiver_thread, &s) != 0) {
+  if (pthread_create(&receiver_tid, NULL, receiver_thread, &receiver_args) !=
+      0) {
     perror("pthread_create receiver");
+    pthread_cancel(sender_tid);
     exit(EXIT_FAILURE);
   }
 
   pthread_join(sender_tid, NULL);
   pthread_join(receiver_tid, NULL);
-
   close(s);
 }
