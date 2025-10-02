@@ -32,7 +32,7 @@ static ssize_t write_string(struct file *file, const char __user *buf,
 static struct file_operations fops = {
     .owner = THIS_MODULE, .read = read_string, .write = write_string};
 
-static int __init init_module(void) {
+static int __init startup(void) {
   pr_info("String module!\n");
   rwlock_init(&lock);
   major = register_chrdev(major, "string", &fops);
@@ -45,5 +45,5 @@ static int __init init_module(void) {
 
 static void __exit cleanup(void) { pr_info("Godbye world!\n"); }
 
-module_init(init_module());
+module_init(startup);
 module_exit(cleanup);
