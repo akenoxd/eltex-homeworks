@@ -352,7 +352,5 @@ int main() {
     printf("Error during cleanup\n");
     return 1;
   }
-
-  printf("Taxi management system shutdown completed\n");
   return 0;
 }

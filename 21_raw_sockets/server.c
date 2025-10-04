@@ -34,7 +34,6 @@ void handle_sigint(int sig) {
   stop_flag = 1;
 }
 
-// Структура для хранения информации о клиенте
 typedef struct {
   struct in_addr ip;
   uint16_t port;
@@ -245,10 +244,10 @@ int main() {
           (payload_len < bytes_left_in_buf) ? payload_len : bytes_left_in_buf;
       payload[safe_payload_len] = '\0';
     } else {
-      continue; // Skip empty packets
+      continue; // empty packets
     }
 
-    // Get client info
+    // get client info
     struct in_addr client_ip;
     client_ip.s_addr = iph->saddr;
     uint16_t client_port = ntohs(udph->source);

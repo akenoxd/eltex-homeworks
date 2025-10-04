@@ -3,16 +3,16 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/proc_fs.h>
 #include <linux/uaccess.h>
 
 MODULE_LICENSE("GPL");
 
-static int major = 0;
 static rwlock_t lock;
 static char string[20] = "hello";
 
-static ssize_t read_string(struct file *fd, char __user *buff, size_t size,
-                           loff_t *off) {
+static ssize_t proc_read(struct file *fd, char __user *buff, size_t size,
+                         loff_t *off) {
   size_t rc;
 
   read_lock(&lock);
@@ -21,8 +21,8 @@ static ssize_t read_string(struct file *fd, char __user *buff, size_t size,
   return rc;
 }
 
-static ssize_t write_string(struct file *fd, const char __user *buff,
-                            size_t size, loff_t *off) {
+static ssize_t proc_write(struct file *fd, const char __user *buff, size_t size,
+                          loff_t *off) {
   int rc = 0;
   if (size > 20)
     return -EINVAL;
@@ -33,21 +33,23 @@ static ssize_t write_string(struct file *fd, const char __user *buff,
   return rc;
 }
 
-static struct file_operations fops = {
-    .owner = THIS_MODULE, .read = read_string, .write = write_string};
+static struct proc_ops proc_fops = {.proc_read = proc_read,
+                                    .proc_write = proc_write};
 
 static int __init startup(void) {
   pr_info("String module!\n");
   rwlock_init(&lock);
-  major = register_chrdev(major, "string", &fops);
-  if (major < 0)
-    return major;
 
-  pr_info("Major number: %d\n", major);
+  proc_create("string", 0666, NULL, &proc_fops);
+
+  pr_info("Proc file created: /proc/string\n");
   return 0;
 }
 
-static void __exit cleanup(void) { pr_info("Godbye world!\n"); }
+static void __exit cleanup(void) {
+  remove_proc_entry("string", NULL);
+  pr_info("Goodbye world!\n");
+}
 
 module_init(startup);
 module_exit(cleanup);
