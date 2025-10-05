@@ -1,0 +1,7 @@
+для запуска:
+
+docker compose run --rm server
+docker compose run --rm client-1
+docker compose run --rm client-2
+
+можно добавить еще клиентов по аналогии в docker compose, должно работать!
